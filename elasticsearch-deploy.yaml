@@ -1,0 +1,128 @@
+
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: elasticsearch
+  namespace: elastic
+spec:
+  version: 8.4.0
+  secureSettings:
+  - secretName: aws-credentials
+  nodeSets:
+  - name: master
+    count: 3
+    config:
+      node.roles: ["master", "data_hot", "data_warm"]
+      path.repo: "/usr/share/elasticsearch/backups"
+      xpack.monitoring.collection.enabled: "true" 
+      xpack.monitoring.elasticsearch.collection.enabled: "false" 
+    podTemplate:
+      metadata: 
+        labels: 
+          stack-monitoring.elastic.co/type: es 
+        annotations: 
+          co.elastic.logs/enabled: "true"
+      spec:
+        initContainers:
+        - name: add-access-keys
+          env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: aws-credentials
+                key: s3.client.default.access_key
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: aws-credentials
+                key: s3.client.default.secret_key
+          command:
+          - sh
+          - -c
+          - |
+            echo $AWS_ACCESS_KEY_ID | bin/elasticsearch-keystore add --stdin --force s3.client.default.access_key
+            echo $AWS_SECRET_ACCESS_KEY | bin/elasticsearch-keystore add --stdin --force s3.client.default.secret_key
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+              - matchExpressions:
+                - key: alpha.eksctl.io/nodegroup-name
+                  operator: In
+                  values:
+                  - prudentte-tools-master-ng-m5-xlarge
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      elasticsearch.k8s.elastic.co/cluster-name: elasticsearch
+                  topologyKey: kubernetes.io/hostname
+    volumeClaimTemplates:
+    - metadata:
+        name: elasticsearch-data # Do not change this name unless you set up a volume mount for the data path.
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 300Gi
+        storageClassName: storage-elasticsearch
+  - name: data-nodes
+    count: 5
+    config:
+      node.roles: ["data", "ingest", "data_hot", "data_warm"]
+      path.repo: "/usr/share/elasticsearch/backups"
+    podTemplate:
+      spec:
+        initContainers:
+        - name: add-access-keys
+          env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: aws-credentials
+                key: s3.client.default.access_key
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: aws-credentials
+                key: s3.client.default.secret_key
+          command:
+          - sh
+          - -c
+          - |
+            echo $AWS_ACCESS_KEY_ID | bin/elasticsearch-keystore add --stdin --force s3.client.default.access_key
+            echo $AWS_SECRET_ACCESS_KEY | bin/elasticsearch-keystore add --stdin --force s3.client.default.secret_key
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+              - matchExpressions:
+                - key: alpha.eksctl.io/nodegroup-name
+                  operator: In
+                  values:
+                  - prudentte-tools-workers-ng-m5-xlarge
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      elasticsearch.k8s.elastic.co/cluster-name: elasticsearch
+                  topologyKey: kubernetes.io/hostname
+    volumeClaimTemplates:
+    - metadata:
+        name: elasticsearch-data # Do not change this name unless you set up a volume mount for the data path.
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 300Gi
+        storageClassName: storage-elasticsearch
+  http:
+    tls:
+      selfSignedCertificate:
+        disabled: true

@@ -1,0 +1,41 @@
+
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: kibana
+  namespace: elastic
+spec:
+  podTemplate:
+    metadata:
+      labels:
+        app: kibana
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: alpha.eksctl.io/nodegroup-name
+                operator: In
+                values:
+                - prudentte-tools-workers-ng-m5-xlarge
+      volumes:
+        - name: config
+          configMap:
+            name: kibana-config
+  version: 8.4.3
+  count: 1
+  elasticsearchRef:
+    name: elasticsearch
+  http:
+    service:
+      spec:
+        type: ClusterIP
+    tls:
+      selfSignedCertificate:
+        disabled: true
+
+
+
+
+

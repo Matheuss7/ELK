@@ -1,0 +1,171 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: heartbeat-config
+  namespace: elastic
+  labels:
+    k8s-app: heartbeat
+data:
+  heartbeat.yml: |-
+    heartbeat.monitors:
+    - type: http
+      schedule: '@every 600s'
+      urls:
+        - "https://api.dominio.com.br/"
+        - "https://api.dominio.com.br/readyz"
+        - "https://api.dominio.com.br/onboard/"
+        - "https://api.dominio.com.br/onboard/readyz"
+        - "https://sandbox.api.dominio.com.br/"
+        - "https://sandbox.api.dominio.com.br/readyz/"
+        - "https://sandbox.api.dominio.com.br/onboard/"
+        - "https://sandbox.api.dominio.com.br/onboard/readyz/"
+      check.response.status: 200
+
+
+    processors:
+      - add_cloud_metadata:
+
+    cloud.id: ${ELASTIC_CLOUD_ID}
+    cloud.auth: ${ELASTIC_CLOUD_AUTH}
+
+    output.elasticsearch:
+      hosts: ['${ELASTICSEARCH_HOST:elasticsearch}:${ELASTICSEARCH_PORT:9200}']
+      username: ${ELASTICSEARCH_USERNAME}
+      password: ${ELASTICSEARCH_PASSWORD}
+      ssl.certificate_authorities:
+        - /etc/certificate/ca.crt
+
+    setup.kibana:
+      host: ${KIBANA_HOST}
+      ssl.certificate_authorities:
+        - /etc/certificate/ca.pem
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: heartbeat
+  namespace: elastic
+  labels:
+    k8s-app: heartbeat
+spec:
+  selector:
+    matchLabels:
+      k8s-app: heartbeat
+  template:
+    metadata:
+      labels:
+        k8s-app: heartbeat
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: alpha.eksctl.io/nodegroup-name
+                operator: In
+                values:
+                - dominio-tools-workers-ng-m5-xlarge
+      serviceAccountName: heartbeat
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: heartbeat
+        image: docker.elastic.co/beats/heartbeat:8.2.2
+        args: [
+          "-c", "/etc/heartbeat.yml",
+          "-e",
+        ]
+        env:
+        - name: ELASTICSEARCH_HOST
+          value: http://elasticsearch-es-http
+        - name: ELASTICSEARCH_PORT
+          value: "9200"
+        - name: ELASTICSEARCH_USERNAME
+          value: elastic
+        - name: ELASTICSEARCH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: elasticsearch-es-elastic-user
+              key: elastic
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        securityContext:
+          runAsUser: 0
+        resources:
+          limits:
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        volumeMounts:
+        - name: config
+          mountPath: /etc/heartbeat.yml
+          readOnly: true
+          subPath: heartbeat.yml
+        - name: certs
+          mountPath: /etc/certificate/ca.crt
+          readOnly: true
+          subPath: ca.crt
+      volumes:
+      - name: config
+        configMap:
+          defaultMode: 0600
+          name: heartbeat-config
+      - name: certs
+        secret:
+          secretName: elasticsearch-es-http-certs-public
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: heartbeat
+subjects:
+- kind: ServiceAccount
+  name: heartbeat
+  namespace: elastic
+roleRef:
+  kind: ClusterRole
+  name: heartbeat
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: heartbeat
+  labels:
+    k8s-app: heartbeat
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - namespaces
+  - events
+  - pods
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions"]
+  resources:
+  - replicasets
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources:
+  - statefulsets
+  - deployments
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - ""
+  resources:
+  - nodes/stats
+  verbs:
+  - get
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: heartbeat
+  namespace: elastic
+  labels:
+    k8s-app: heartbeat
+---
